@@ -1,0 +1,8 @@
+project/demo/target
+project/demo/.mvn
+project/demo/.idea
+project/.idea
+.idea
+*.iml
+.git
+.gitignore
