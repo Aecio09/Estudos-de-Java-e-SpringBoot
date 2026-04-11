@@ -15,6 +15,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.Spinner;
@@ -27,6 +28,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.scene.input.MouseButton;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.scene.shape.Line;
@@ -93,6 +95,11 @@ public class NetworkApp extends Application {
     private Label transmissionLabel;
     private Timeline transmissionTimeline;
     private int activeTransmissions;
+    private int deliveredPackets;
+    private int expectedPackets;
+    private String currentDestinationName;
+    private String currentSourceInterfaceName;
+    private String currentDestinationInterfaceName;
     private Label devicesInfoLabel;
     private Label cablesInfoLabel;
     private Label queueInfoLabel;
@@ -214,7 +221,7 @@ public class NetworkApp extends Application {
         ComboBox<String> type = new ComboBox<>();
         type.getItems().addAll("telefone", "pc", "tablet", "notebook", "roteador", "servidor");
         type.setValue("telefone");
-        type.setStyle(INPUT_STYLE);
+        styleComboBox(type);
         TextField name = new TextField("Dispositivo");
         name.setStyle(INPUT_STYLE);
         TextField ip = new TextField("192.168.1.30");
@@ -267,35 +274,53 @@ public class NetworkApp extends Application {
         styleDialog(dialog);
 
         ComboBox<Device> from = new ComboBox<>();
+        ComboBox<String> fromInterface = new ComboBox<>();
         ComboBox<Device> to = new ComboBox<>();
+        ComboBox<String> toInterface = new ComboBox<>();
         from.getItems().setAll(devices);
         to.getItems().setAll(devices);
         from.setValue(devices[0]);
         to.setValue(devices[Math.min(1, devices.length - 1)]);
-        from.setStyle(INPUT_STYLE);
-        to.setStyle(INPUT_STYLE);
+        styleComboBox(from);
+        styleComboBox(fromInterface);
+        styleComboBox(to);
+        styleComboBox(toInterface);
+
+        updateInterfaceCombo(fromInterface, from.getValue());
+        updateInterfaceCombo(toInterface, to.getValue());
+        from.setOnAction(event -> updateInterfaceCombo(fromInterface, from.getValue()));
+        to.setOnAction(event -> updateInterfaceCombo(toInterface, to.getValue()));
 
         GridPane form = new GridPane();
         form.setHgap(10);
         form.setVgap(10);
         form.setPadding(new Insets(6, 2, 2, 2));
         form.addRow(0, createDialogLabel("De"), from);
-        form.addRow(1, createDialogLabel("Para"), to);
+        form.addRow(1, createDialogLabel("Interface saída"), fromInterface);
+        form.addRow(2, createDialogLabel("Para"), to);
+        form.addRow(3, createDialogLabel("Interface entrada"), toInterface);
         dialog.getDialogPane().setContent(form);
 
         dialog.showAndWait().ifPresent(result -> {
             if (result == ButtonType.OK) {
                 Device a = from.getValue();
                 Device b = to.getValue();
-                if (a == null || b == null) {
-                    setStatus("Selecione os dois dispositivos.");
+                Integer aIf = selectedInterfaceIndex(fromInterface);
+                Integer bIf = selectedInterfaceIndex(toInterface);
+                if (a == null || b == null || aIf == null || bIf == null) {
+                    setStatus("Selecione dispositivos e interfaces.");
                     return;
                 }
-                if (logic.addCable(a.getId(), b.getId())) {
+                if (!logic.hasAvailableInterface(a.getId()) || !logic.hasAvailableInterface(b.getId())) {
+                    setStatus("Um dos dispositivos está sem interfaces livres para novo cabo.");
+                    return;
+                }
+                if (logic.addCable(a.getId(), aIf, b.getId(), bIf)) {
                     renderMap();
-                    setStatus("Cabo conectado.");
+                    setStatus("Cabo conectado: " + a.getName() + "[" + a.getInterfaceNameAt(aIf) + "] -> "
+                            + b.getName() + "[" + b.getInterfaceNameAt(bIf) + "]");
                 } else {
-                    setStatus("Cabo invalido ou ja existente.");
+                    setStatus("Cabo inválido: verifique se interfaces já estão em uso.");
                 }
             }
         });
@@ -317,14 +342,14 @@ public class NetworkApp extends Application {
         ComboBox<Device> destination = new ComboBox<>();
         Spinner<Integer> count = new Spinner<>(1, NetworkLogic.MAX_PACKETS, 8);
         count.setEditable(true);
-        count.getEditor().setStyle(INPUT_STYLE);
+        stylePacketSpinner(count);
 
         source.getItems().setAll(devices);
         destination.getItems().setAll(devices);
         source.setValue(firstUserDevice(devices) != null ? firstUserDevice(devices) : devices[0]);
         destination.setValue(firstServerDevice(devices) != null ? firstServerDevice(devices) : devices[Math.min(1, devices.length - 1)]);
-        source.setStyle(INPUT_STYLE);
-        destination.setStyle(INPUT_STYLE);
+        styleComboBox(source);
+        styleComboBox(destination);
 
         GridPane form = new GridPane();
         form.setHgap(10);
@@ -355,8 +380,12 @@ public class NetworkApp extends Application {
                     setStatus("Pacotes enviados diretamente na mesma rede (" + (route.length - 1) + " salto(s)).");
                 } else {
                     Device router = logic.findRouter();
-                    String iface = router != null ? router.getInterfaceName() : "iface";
-                    setStatus("Pacotes enviados via roteador (interface " + iface + ") com " + (route.length - 1) + " salto(s).");
+                    if (router != null) {
+                        String ifaceInOut = routerInterfaceFlowText(route, router);
+                        setStatus("Pacotes enviados via roteador " + ifaceInOut + " com " + (route.length - 1) + " salto(s).");
+                    } else {
+                        setStatus("Pacotes enviados por roteamento com " + (route.length - 1) + " salto(s).");
+                    }
                 }
             }
         });
@@ -403,7 +432,7 @@ public class NetworkApp extends Application {
         ComboBox<String> networks = new ComboBox<>();
         networks.getItems().setAll(names);
         networks.setValue(names[0]);
-        networks.setStyle(INPUT_STYLE);
+        styleComboBox(networks);
 
         GridPane form = new GridPane();
         form.setHgap(10);
@@ -556,7 +585,7 @@ public class NetworkApp extends Application {
         typeTag.setLayoutX(deviceX - 25);
         typeTag.setLayoutY(deviceY - 40);
 
-        Text label = new Text(name + "\n" + ip + " • " + interfaceName);
+        Text label = new Text(name + "\n" + ip + " • " + interfaceName + " ... (" + device.getInterfaceCount() + " ifs)");
         label.setFill(Color.web("#f5f7fb"));
         label.setFont(Font.font("System", FontWeight.NORMAL, 11));
         label.setTextAlignment(TextAlignment.CENTER);
@@ -573,6 +602,14 @@ public class NetworkApp extends Application {
         final double[] pendingPosition = new double[2];
         final boolean[] dragging = new boolean[]{false};
         group.setOnMousePressed(event -> {
+            if (event.getButton() == MouseButton.SECONDARY) {
+                showDeviceInfoDialog(device);
+                event.consume();
+                return;
+            }
+            if (event.getButton() != MouseButton.PRIMARY) {
+                return;
+            }
             dragStartScene[0] = event.getSceneX();
             dragStartScene[1] = event.getSceneY();
             dragStartDevice[0] = device.getX();
@@ -585,6 +622,9 @@ public class NetworkApp extends Application {
             event.consume();
         });
         group.setOnMouseDragged(event -> {
+            if (!event.isPrimaryButtonDown()) {
+                return;
+            }
             double deltaX = event.getSceneX() - dragStartScene[0];
             double deltaY = event.getSceneY() - dragStartScene[1];
             double newX = dragStartDevice[0] + deltaX;
@@ -599,6 +639,9 @@ public class NetworkApp extends Application {
             event.consume();
         });
         group.setOnMouseReleased(event -> {
+            if (event.getButton() != MouseButton.PRIMARY) {
+                return;
+            }
             group.setCursor(Cursor.OPEN_HAND);
             if (dragging[0]) {
                 device.setPosition(pendingPosition[0], pendingPosition[1]);
@@ -628,6 +671,36 @@ public class NetworkApp extends Application {
             group.getChildren().addAll(deleteBg, deleteText);
         }
         return group;
+    }
+
+    private void showDeviceInfoDialog(Device device) {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Informações do dispositivo");
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.OK);
+        styleDialog(dialog);
+
+        GridPane info = new GridPane();
+        info.setHgap(10);
+        info.setVgap(8);
+        info.setPadding(new Insets(6, 2, 2, 2));
+        info.addRow(0, createDialogLabel("ID"), createDialogValue(String.valueOf(device.getId())));
+        info.addRow(1, createDialogLabel("Tipo"), createDialogValue(displayType(device.getType())));
+        info.addRow(2, createDialogLabel("Nome"), createDialogValue(device.getName()));
+        info.addRow(3, createDialogLabel("IP"), createDialogValue(device.getIp()));
+        info.addRow(4, createDialogLabel("Rede"), createDialogValue(device.getNetwork()));
+        info.addRow(5, createDialogLabel("Posição"), createDialogValue((int) device.getX() + ", " + (int) device.getY()));
+
+        String interfacesText = "";
+        for (int i = 0; i < device.getInterfaceCount(); i++) {
+            if (i > 0) {
+                interfacesText += " | ";
+            }
+            interfacesText += device.getInterfaceNameAt(i);
+        }
+        info.addRow(6, createDialogLabel("Interfaces"), createDialogValue(interfacesText));
+
+        dialog.getDialogPane().setContent(info);
+        dialog.showAndWait();
     }
 
     private double clamp(double value, double min, double max) {
@@ -665,6 +738,13 @@ public class NetworkApp extends Application {
 
         int safeCount = Math.min(Math.max(1, count), NetworkLogic.MAX_PACKETS);
         activeTransmissions = safeCount;
+        deliveredPackets = 0;
+        expectedPackets = safeCount;
+        currentDestinationName = routeDevices[routeDevices.length - 1].getName();
+        int sourceInterfaceIndex = logic.getInterfaceIndexForLink(route[0], route[1]);
+        int destinationInterfaceIndex = logic.getInterfaceIndexForLink(route[route.length - 1], route[route.length - 2]);
+        currentSourceInterfaceName = interfaceDisplay(routeDevices[0], sourceInterfaceIndex);
+        currentDestinationInterfaceName = interfaceDisplay(routeDevices[routeDevices.length - 1], destinationInterfaceIndex);
         startTransmissionIndicator();
         for (int i = 0; i < safeCount; i++) {
             Circle packet = getPacketCircle(i);
@@ -710,9 +790,16 @@ public class NetworkApp extends Application {
                 if (packetAnimations[index] == timeline) {
                     packet.setVisible(false);
                 }
+                deliveredPackets++;
+                setStatus("Envio: " + currentSourceInterfaceName + " -> " + currentDestinationInterfaceName
+                        + " | Recebidos no destino " + currentDestinationName + ": "
+                        + deliveredPackets + "/" + expectedPackets + " pacote(s).");
                 activeTransmissions = Math.max(0, activeTransmissions - 1);
                 if (activeTransmissions == 0) {
                     stopTransmissionIndicator();
+                    setStatus("Transmissão concluída: " + currentSourceInterfaceName + " -> "
+                            + currentDestinationInterfaceName + " | destino " + currentDestinationName
+                            + " recebeu " + expectedPackets + "/" + expectedPackets + " pacote(s).");
                 }
             });
             packetAnimations[i] = timeline;
@@ -748,6 +835,11 @@ public class NetworkApp extends Application {
             }
         }
         activeTransmissions = 0;
+        deliveredPackets = 0;
+        expectedPackets = 0;
+        currentDestinationName = null;
+        currentSourceInterfaceName = null;
+        currentDestinationInterfaceName = null;
         stopTransmissionIndicator();
     }
 
@@ -835,6 +927,110 @@ public class NetworkApp extends Application {
         label.setTextFill(Color.web("#edf4ff"));
         label.setFont(Font.font("System", FontWeight.SEMI_BOLD, 12));
         return label;
+    }
+
+    private Label createDialogValue(String text) {
+        Label label = new Label(text);
+        label.setTextFill(Color.web("#ffffff"));
+        label.setFont(Font.font("System", FontWeight.NORMAL, 12));
+        return label;
+    }
+
+    private void updateInterfaceCombo(ComboBox<String> comboBox, Device device) {
+        comboBox.getItems().clear();
+        if (device == null) {
+            comboBox.setValue(null);
+            return;
+        }
+        for (int i = 0; i < device.getInterfaceCount(); i++) {
+            if (logic.isInterfaceAvailable(device.getId(), i)) {
+                comboBox.getItems().add(i + " - " + device.getInterfaceNameAt(i));
+            }
+        }
+        if (comboBox.getItems().isEmpty()) {
+            comboBox.getItems().add("-1 - sem interfaces livres");
+            comboBox.setValue(comboBox.getItems().get(0));
+        } else {
+            comboBox.setValue(comboBox.getItems().get(0));
+        }
+    }
+
+    private Integer selectedInterfaceIndex(ComboBox<String> comboBox) {
+        String value = comboBox.getValue();
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        int separator = value.indexOf(" - ");
+        String indexPart = separator >= 0 ? value.substring(0, separator) : value;
+        try {
+            int parsed = Integer.parseInt(indexPart.trim());
+            return parsed >= 0 ? parsed : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private String routerInterfaceFlowText(int[] route, Device router) {
+        int routerPosition = -1;
+        for (int i = 0; i < route.length; i++) {
+            if (route[i] == router.getId()) {
+                routerPosition = i;
+                break;
+            }
+        }
+        if (routerPosition <= 0 || routerPosition >= route.length - 1) {
+            return "(interface " + router.getInterfaceNameAt(0) + ")";
+        }
+
+        int previousId = route[routerPosition - 1];
+        int nextId = route[routerPosition + 1];
+        int inIndex = logic.getInterfaceIndexForLink(router.getId(), previousId);
+        int outIndex = logic.getInterfaceIndexForLink(router.getId(), nextId);
+        if (inIndex < 0 || outIndex < 0) {
+            return "(interfaces do roteador)";
+        }
+        return "(" + router.getInterfaceNameAt(inIndex) + " -> " + router.getInterfaceNameAt(outIndex) + ")";
+    }
+
+    private String interfaceDisplay(Device device, int interfaceIndex) {
+        if (device == null || interfaceIndex < 0 || interfaceIndex >= device.getInterfaceCount()) {
+            return "?";
+        }
+        return device.getName() + "[" + device.getInterfaceNameAt(interfaceIndex) + "]";
+    }
+
+    private <T> void styleComboBox(ComboBox<T> comboBox) {
+        comboBox.setStyle(INPUT_STYLE + "-fx-mark-color: white;");
+        comboBox.setButtonCell(new ListCell<>() {
+            @Override
+            protected void updateItem(T item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText("");
+                } else {
+                    setText(item.toString());
+                }
+                setTextFill(Color.WHITE);
+                setStyle("-fx-background-color: transparent;");
+            }
+        });
+        comboBox.setCellFactory(list -> new ListCell<>() {
+            @Override
+            protected void updateItem(T item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText("");
+                } else {
+                    setText(item.toString());
+                }
+                setTextFill(Color.web("#0b1f36"));
+            }
+        });
+    }
+
+    private void stylePacketSpinner(Spinner<Integer> spinner) {
+        spinner.setStyle(INPUT_STYLE + "-fx-pref-width: 118;");
+        spinner.getEditor().setStyle(INPUT_STYLE + "-fx-font-size: 16px; -fx-font-weight: bold; -fx-alignment: center;");
     }
 
     private void styleDialog(Dialog<ButtonType> dialog) {

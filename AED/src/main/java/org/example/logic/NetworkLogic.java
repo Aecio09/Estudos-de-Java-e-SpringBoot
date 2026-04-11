@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 
 public class NetworkLogic {
     public static final int MAX_DEVICES = 20;
@@ -41,8 +40,8 @@ public class NetworkLogic {
             return;
         }
 
-        addCable(phone.getId(), router.getId());
-        addCable(router.getId(), server.getId());
+        addCable(phone.getId(), 0, router.getId(), 0);
+        addCable(router.getId(), 1, server.getId(), 0);
     }
 
     public boolean addUserDevice(String type, String name, String ip, String network, String interfaceName) {
@@ -72,13 +71,36 @@ public class NetworkLogic {
     }
 
     public boolean addCable(int fromId, int toId) {
+        Device fromDevice = findDeviceById(fromId);
+        Device toDevice = findDeviceById(toId);
+        if (fromDevice == null || toDevice == null) {
+            return false;
+        }
+        int fromInterface = firstAvailableInterface(fromId, fromDevice.getInterfaceCount());
+        int toInterface = firstAvailableInterface(toId, toDevice.getInterfaceCount());
+        if (fromInterface < 0 || toInterface < 0) {
+            return false;
+        }
+        return addCable(fromId, fromInterface, toId, toInterface);
+    }
+
+    public boolean addCable(int fromId, int fromInterfaceIndex, int toId, int toInterfaceIndex) {
         if (fromId == toId || cableCount >= MAX_CABLES) {
             return false;
         }
-        if (indexOfDevice(fromId) < 0 || indexOfDevice(toId) < 0 || isCablePresent(fromId, toId)) {
+        Device fromDevice = findDeviceById(fromId);
+        Device toDevice = findDeviceById(toId);
+        if (fromDevice == null || toDevice == null || isCablePresent(fromId, toId)) {
             return false;
         }
-        cables[cableCount] = new Cable(fromId, toId);
+        if (!isValidInterfaceIndex(fromDevice, fromInterfaceIndex) || !isValidInterfaceIndex(toDevice, toInterfaceIndex)) {
+            return false;
+        }
+        if (isInterfaceInUse(fromId, fromInterfaceIndex) || isInterfaceInUse(toId, toInterfaceIndex)) {
+            return false;
+        }
+
+        cables[cableCount] = new Cable(fromId, fromInterfaceIndex, toId, toInterfaceIndex);
         cableCount++;
         return true;
     }
@@ -124,23 +146,18 @@ public class NetworkLogic {
             lastRouteErrorMessage = "Dispositivos em redes diferentes: é necessário um roteador.";
             return null;
         }
-        int routerId = router.getId();
 
-        if (sourceId == routerId || destinationId == routerId) {
-            int[] pathToRouter = findPath(sourceId, destinationId, -1);
-            if (pathToRouter == null) {
-                lastRouteErrorMessage = "Sem conexão por cabo com o roteador.";
-            }
-            return pathToRouter;
-        }
-
-        boolean sourceConnectedToRouter = isCablePresent(sourceId, routerId);
-        boolean destinationConnectedToRouter = isCablePresent(destinationId, routerId);
-        if (!sourceConnectedToRouter || !destinationConnectedToRouter) {
-            lastRouteErrorMessage = "Dispositivos não estão na mesma rede. Conecte ambos ao roteador.";
+        int[] crossNetworkPath = findPath(sourceId, destinationId, -1);
+        if (crossNetworkPath == null) {
+            lastRouteErrorMessage = "Dispositivos não estão na mesma rede. Conecte as redes por roteadores/cabos.";
             return null;
         }
-        return new int[]{sourceId, routerId, destinationId};
+
+        if (!pathUsesRouter(crossNetworkPath)) {
+            lastRouteErrorMessage = "Dispositivos não estão na mesma rede. A rota precisa passar por roteador.";
+            return null;
+        }
+        return crossNetworkPath;
     }
 
     public String getLastRouteErrorMessage() {
@@ -195,7 +212,10 @@ public class NetworkLogic {
             data.append("CABLES\n");
             for (int i = 0; i < cableCount; i++) {
                 Cable c = cables[i];
-                data.append(c.getFromId()).append(";").append(c.getToId()).append("\n");
+                data.append(c.getFromId()).append(";")
+                        .append(c.getFromInterfaceIndex()).append(";")
+                        .append(c.getToId()).append(";")
+                        .append(c.getToInterfaceIndex()).append("\n");
             }
             Files.writeString(file, data.toString(), StandardCharsets.UTF_8);
             return true;
@@ -263,14 +283,19 @@ public class NetworkLogic {
                     deviceCount++;
                 } else if (readingCables) {
                     String[] parts = line.split(";");
-                    if (parts.length != 2 || cableCount >= MAX_CABLES) {
+                    if (cableCount >= MAX_CABLES) {
                         continue;
                     }
-                    int from = Integer.parseInt(parts[0]);
-                    int to = Integer.parseInt(parts[1]);
-                    if (indexOfDevice(from) >= 0 && indexOfDevice(to) >= 0 && !isCablePresent(from, to)) {
-                        cables[cableCount] = new Cable(from, to);
-                        cableCount++;
+                    if (parts.length == 2) {
+                        int from = Integer.parseInt(parts[0]);
+                        int to = Integer.parseInt(parts[1]);
+                        addCable(from, to);
+                    } else if (parts.length == 4) {
+                        int from = Integer.parseInt(parts[0]);
+                        int fromInterface = Integer.parseInt(parts[1]);
+                        int to = Integer.parseInt(parts[2]);
+                        int toInterface = Integer.parseInt(parts[3]);
+                        addCable(from, fromInterface, to, toInterface);
                     }
                 }
             }
@@ -286,17 +311,53 @@ public class NetworkLogic {
             return new String[0];
         }
         try {
-            String[] names;
-            try (var stream = Files.list(STORAGE_DIR)) {
-                names = stream
-                        .filter(path -> path.getFileName().toString().endsWith(".net"))
-                        .map(path -> path.getFileName().toString().replace(".net", ""))
-                        .sorted()
-                        .toArray(String[]::new);
+            String[] names = new String[8];
+            int count = 0;
+            try (var entries = Files.newDirectoryStream(STORAGE_DIR)) {
+                for (Path entry : entries) {
+                    String fileName = entry.getFileName().toString();
+                    if (!fileName.endsWith(".net")) {
+                        continue;
+                    }
+                    if (count >= names.length) {
+                        names = growStringArray(names);
+                    }
+                    names[count] = fileName.substring(0, fileName.length() - 4);
+                    count++;
+                }
             }
-            return Arrays.copyOf(names, names.length);
+            sortNames(names, count);
+            return trimStringArray(names, count);
         } catch (IOException e) {
             return new String[0];
+        }
+    }
+
+    private String[] growStringArray(String[] source) {
+        String[] grown = new String[source.length + 8];
+        for (int i = 0; i < source.length; i++) {
+            grown[i] = source[i];
+        }
+        return grown;
+    }
+
+    private String[] trimStringArray(String[] source, int size) {
+        String[] trimmed = new String[size];
+        for (int i = 0; i < size; i++) {
+            trimmed[i] = source[i];
+        }
+        return trimmed;
+    }
+
+    private void sortNames(String[] names, int count) {
+        for (int i = 0; i < count - 1; i++) {
+            for (int j = 0; j < count - 1 - i; j++) {
+                if (names[j].compareTo(names[j + 1]) > 0) {
+                    String temp = names[j];
+                    names[j] = names[j + 1];
+                    names[j + 1] = temp;
+                }
+            }
         }
     }
 
@@ -368,6 +429,40 @@ public class NetworkLogic {
             }
         }
         return false;
+    }
+
+    public int getInterfaceIndexForLink(int deviceId, int otherDeviceId) {
+        for (int i = 0; i < cableCount; i++) {
+            Cable cable = cables[i];
+            if (cable.getFromId() == deviceId && cable.getToId() == otherDeviceId) {
+                return cable.getFromInterfaceIndex();
+            }
+            if (cable.getToId() == deviceId && cable.getFromId() == otherDeviceId) {
+                return cable.getToInterfaceIndex();
+            }
+        }
+        return -1;
+    }
+
+    public boolean hasAvailableInterface(int deviceId) {
+        Device device = findDeviceById(deviceId);
+        if (device == null) {
+            return false;
+        }
+        for (int i = 0; i < device.getInterfaceCount(); i++) {
+            if (!isInterfaceInUse(deviceId, i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean isInterfaceAvailable(int deviceId, int interfaceIndex) {
+        Device device = findDeviceById(deviceId);
+        if (device == null || !isValidInterfaceIndex(device, interfaceIndex)) {
+            return false;
+        }
+        return !isInterfaceInUse(deviceId, interfaceIndex);
     }
 
     private int[] findPath(int fromId, int toId, int blockedId) {
@@ -465,9 +560,45 @@ public class NetworkLogic {
         return joined;
     }
 
+    private boolean pathUsesRouter(int[] path) {
+        for (int deviceId : path) {
+            Device device = findDeviceById(deviceId);
+            if (device != null && "roteador".equals(device.getType())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private int indexOfDevice(int id) {
         for (int i = 0; i < deviceCount; i++) {
             if (devices[i].getId() == id) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private boolean isValidInterfaceIndex(Device device, int interfaceIndex) {
+        return interfaceIndex >= 0 && interfaceIndex < device.getInterfaceCount();
+    }
+
+    private boolean isInterfaceInUse(int deviceId, int interfaceIndex) {
+        for (int i = 0; i < cableCount; i++) {
+            Cable cable = cables[i];
+            if (cable.getFromId() == deviceId && cable.getFromInterfaceIndex() == interfaceIndex) {
+                return true;
+            }
+            if (cable.getToId() == deviceId && cable.getToInterfaceIndex() == interfaceIndex) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private int firstAvailableInterface(int deviceId, int interfaceCount) {
+        for (int i = 0; i < interfaceCount; i++) {
+            if (!isInterfaceInUse(deviceId, i)) {
                 return i;
             }
         }
