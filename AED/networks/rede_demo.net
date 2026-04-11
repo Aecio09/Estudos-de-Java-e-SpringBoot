@@ -1,0 +1,9 @@
+DEVICES
+1;telefone;Telefone 1;192.168.1.10;192.168.1.0/24;wlan0;120.0;110.0;false
+2;roteador;Roteador;10.0.0.1;10.0.0.0/24;eth0;470.0;220.0;true
+3;servidor;Servidor;10.0.0.20;10.0.0.0/24;eth1;800.0;220.0;true
+6;pc;personal Desktop;192.168.1.31;192.168.1.0/24;eth0;120.0;180.0;false
+CABLES
+1;2
+2;3
+6;2

@@ -1,0 +1,7 @@
+DEVICES
+1;telefone;Dispositivo;192.168.1.30;192.168.1.0/24;eth0;120.0;110.0;false
+2;roteador;roteador;192.168.1.30;192.168.1.0/24;eth0;248.0;130.0;false
+3;tablet;tablet;192.168.1.31;192.168.1.0/24;eth0;595.0;211.0;false
+CABLES
+1;2
+3;2
