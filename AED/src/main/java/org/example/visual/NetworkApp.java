@@ -573,11 +573,11 @@ public class NetworkApp extends Application {
         base.setStrokeWidth(2);
         base.setEffect(new Glow(0.45));
 
-        Text icon = new Text(iconByType(type));
+        Text icon = new Text(DeviceAsciiIcons.iconForType(type));
         icon.setFill(Color.WHITE);
-        icon.setFont(Font.font("System", FontWeight.BOLD, 18));
-        icon.setLayoutX(deviceX - 7);
-        icon.setLayoutY(deviceY + 6);
+        icon.setFont(Font.font("System", FontWeight.BOLD, 17));
+        icon.setLayoutX(deviceX - (icon.getLayoutBounds().getWidth() / 2));
+        icon.setLayoutY(deviceY + (icon.getLayoutBounds().getHeight() / 3));
 
         Text typeTag = new Text(displayType(type));
         typeTag.setFill(Color.web("#a9bbd4"));
@@ -1077,12 +1077,4 @@ public class NetworkApp extends Application {
         };
     }
 
-    private String iconByType(String type) {
-        return switch (type) {
-            case "telefone", "pc", "tablet", "notebook" -> "\uD83D\uDCF1";
-            case "roteador" -> "\uD83D\uDCE1";
-            case "servidor" -> "\uD83D\uDDA5";
-            default -> "▣";
-        };
-    }
 }
