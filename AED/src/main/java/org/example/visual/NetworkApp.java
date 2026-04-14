@@ -95,7 +95,8 @@ public class NetworkApp extends Application {
     private Label transmissionLabel;
     private Timeline transmissionTimeline;
     private int activeTransmissions;
-    private int deliveredPackets;
+    private int receivedPackets;
+    private int confirmedPackets;
     private int expectedPackets;
     private String currentDestinationName;
     private String currentSourceInterfaceName;
@@ -199,7 +200,7 @@ public class NetworkApp extends Application {
         statusLabel.setTextFill(Color.WHITE);
         statusLabel.setFont(Font.font("System", FontWeight.SEMI_BOLD, 12));
 
-        transmissionLabel = new Label("✉ Enviando...");
+        transmissionLabel = new Label("✉ Enviando e confirmando...");
         transmissionLabel.setTextFill(Color.web("#bafcd2"));
         transmissionLabel.setFont(Font.font("System", FontWeight.SEMI_BOLD, 12));
         transmissionLabel.setVisible(false);
@@ -738,7 +739,8 @@ public class NetworkApp extends Application {
 
         int safeCount = Math.min(Math.max(1, count), NetworkLogic.MAX_PACKETS);
         activeTransmissions = safeCount;
-        deliveredPackets = 0;
+        receivedPackets = 0;
+        confirmedPackets = 0;
         expectedPackets = safeCount;
         currentDestinationName = routeDevices[routeDevices.length - 1].getName();
         int sourceInterfaceIndex = logic.getInterfaceIndexForLink(route[0], route[1]);
@@ -748,6 +750,7 @@ public class NetworkApp extends Application {
         startTransmissionIndicator();
         for (int i = 0; i < safeCount; i++) {
             Circle packet = getPacketCircle(i);
+            packet.setFill(Color.web("#39ff8b"));
             packet.setCenterX(routeDevices[0].getX());
             packet.setCenterY(routeDevices[0].getY());
             packet.setVisible(true);
@@ -784,22 +787,44 @@ public class NetworkApp extends Application {
                 }
             }
 
+            double destinationArrivalTime = currentTime;
+            timeline.getKeyFrames().add(new KeyFrame(Duration.seconds(destinationArrivalTime), event -> {
+                receivedPackets++;
+                setStatus("Envio: " + currentSourceInterfaceName + " -> " + currentDestinationInterfaceName
+                        + " | Recebidos no destino " + currentDestinationName + ": "
+                        + receivedPackets + "/" + expectedPackets + " pacote(s)"
+                        + " | Confirmações no remetente: " + confirmedPackets + "/" + expectedPackets + ".");
+            }));
+
+            currentTime += 0.26;
+            timeline.getKeyFrames().add(new KeyFrame(Duration.seconds(currentTime),
+                    new KeyValue(packet.fillProperty(), Color.web("#ffd166"))));
+            for (int hop = routeDevices.length - 2; hop >= 0; hop--) {
+                Device returnHop = routeDevices[hop];
+                currentTime += 1.05;
+                timeline.getKeyFrames().add(new KeyFrame(Duration.seconds(currentTime),
+                        new KeyValue(packet.centerXProperty(), returnHop.getX()),
+                        new KeyValue(packet.centerYProperty(), returnHop.getY())));
+            }
+
             int index = i;
             timeline.setDelay(Duration.millis(i * 220.0));
             timeline.setOnFinished(event -> {
                 if (packetAnimations[index] == timeline) {
                     packet.setVisible(false);
                 }
-                deliveredPackets++;
+                confirmedPackets++;
                 setStatus("Envio: " + currentSourceInterfaceName + " -> " + currentDestinationInterfaceName
                         + " | Recebidos no destino " + currentDestinationName + ": "
-                        + deliveredPackets + "/" + expectedPackets + " pacote(s).");
+                        + receivedPackets + "/" + expectedPackets + " pacote(s)"
+                        + " | Confirmações no remetente: " + confirmedPackets + "/" + expectedPackets + ".");
                 activeTransmissions = Math.max(0, activeTransmissions - 1);
                 if (activeTransmissions == 0) {
                     stopTransmissionIndicator();
-                    setStatus("Transmissão concluída: " + currentSourceInterfaceName + " -> "
+                    setStatus("Transmissão concluída com confirmação: " + currentSourceInterfaceName + " -> "
                             + currentDestinationInterfaceName + " | destino " + currentDestinationName
-                            + " recebeu " + expectedPackets + "/" + expectedPackets + " pacote(s).");
+                            + " recebeu " + expectedPackets + "/" + expectedPackets + " pacote(s)"
+                            + " e confirmou " + expectedPackets + "/" + expectedPackets + " ao remetente.");
                 }
             });
             packetAnimations[i] = timeline;
@@ -835,7 +860,8 @@ public class NetworkApp extends Application {
             }
         }
         activeTransmissions = 0;
-        deliveredPackets = 0;
+        receivedPackets = 0;
+        confirmedPackets = 0;
         expectedPackets = 0;
         currentDestinationName = null;
         currentSourceInterfaceName = null;
