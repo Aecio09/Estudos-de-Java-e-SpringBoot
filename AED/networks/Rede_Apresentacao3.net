@@ -1,0 +1,19 @@
+DEVICES
+1;telefone;Celula do roberto;192.168.1.30;192.168.1.0/24;eth0;96.0;148.0;false
+3;pc;Pc do roberto;192.168.1.31;192.168.1.0/24;eth0;92.0;255.0;false
+5;roteador;Roteador DO Roberto;192.168.1.126;192.168.1.0/24;eth0;317.0;241.0;false
+6;notebook;RobertoBook;192.168.1.32;192.168.1.0/24;eth0;82.0;379.0;false
+7;roteador;MiltonRouter;192.168.73.126;192.168.73.0/24;eth0;583.0;240.0;false
+9;telefone;Telefone do milton;192.168.73.06;192.168.73.0/24;eth0;884.0;322.0;false
+10;servidor;GOOGLE;1.1.1.1;1.1.1.0/24;eth0;454.0;349.0;false
+11;notebook;Note do Miltom;192.168.73.30;192.168.73.0/24;eth0;827.0;86.0;false
+CABLES
+1;0;5;0
+3;0;5;1
+6;0;5;2
+7;0;5;3
+9;0;7;2
+10;0;5;4
+10;1;7;3
+11;0;7;1
+9;1;11;1
